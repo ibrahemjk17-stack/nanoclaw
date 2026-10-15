@@ -78,8 +78,9 @@ async function fetchBotUsername(token: string): Promise<string | null> {
 }
 
 function isGroupPlatformId(platformId: string): boolean {
-  // platformId is "telegram:<chatId>". Negative chat IDs are groups/channels.
-  const id = platformId.split(':').pop() ?? '';
+  // platformId is "telegram:<chatId>" or, with TELEGRAM_TOPICS_AS_CHATS,
+  // "telegram:<chatId>:<topicId>". Negative chat IDs are groups/channels.
+  const id = platformId.split(':')[1] ?? '';
   return id.startsWith('-');
 }
 
@@ -379,6 +380,13 @@ export function createTelegramBridge(options: TelegramBridgeOptions = {}): Chann
     botToken: token,
     mode: 'polling',
   });
+  // Jarvis patch (docs/UPSTREAM_PATCHES.md): treat each forum topic as its own
+  // chat, so a topic can be wired to its own agent group. The adapter already
+  // encodes the topic in the thread id ("telegram:<chat>:<topic>"); upstream
+  // strips it here. Delivery decodes the topic back into message_thread_id.
+  if (readEnvFile(['TELEGRAM_TOPICS_AS_CHATS']).TELEGRAM_TOPICS_AS_CHATS === '1') {
+    telegramAdapter.channelIdFromThreadId = (threadId: string) => threadId;
+  }
   const bridge = createChatSdkBridge({
     adapter: telegramAdapter,
     instance: options.instanceKey, // undefined ⇒ default instance (keyed by channelType)
