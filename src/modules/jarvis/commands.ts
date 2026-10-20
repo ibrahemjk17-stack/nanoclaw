@@ -1,11 +1,15 @@
 /**
  * Jarvis: owner commands handled on the host, before any agent sees the message (so they never cost a model call).
  * Pure functions: the wiring to the router and the chat is in index.ts.
+ *
+ *   /stop /resume   control the host (here, no data needed)
+ *   /today /status /budget   text from the data server (our packages/mcp-jarvis-data, /host/*)
+ *   /log            posts the quick-log buttons (handled in quicklog.ts)
  */
 
-export type CommandName = 'stop' | 'resume';
+export type CommandName = 'stop' | 'resume' | 'today' | 'status' | 'budget' | 'log';
 
-const COMMANDS: readonly CommandName[] = ['stop', 'resume'];
+const COMMANDS: readonly CommandName[] = ['stop', 'resume', 'today', 'status', 'budget', 'log'];
 
 /** `/stop`, `/stop@BotName`, case-insensitive, optionally followed by text. Anything else is not a command of ours. */
 export function parseCommand(text: string): CommandName | null {
@@ -19,9 +23,32 @@ export interface CommandDeps {
   setPaused: (paused: boolean) => void;
   /** Kills every running agent container; returns how many. */
   killAll: (reason: string) => number;
+  runningCount: () => number;
+  uptimeSeconds: () => number;
+  /** POST to the data server's /host/<path>; throws when it cannot be reached. */
+  data: (path: string) => Promise<{ text?: string }>;
 }
 
-export function runCommand(name: CommandName, deps: CommandDeps): string {
+export const DATA_DOWN =
+  'The data service is not reachable right now. Try again in a moment, or run scripts/doctor.sh on the host.';
+
+const duration = (s: number): string => {
+  const d = Math.floor(s / 86400),
+    h = Math.floor((s % 86400) / 3600),
+    m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
+async function fromData(deps: CommandDeps, path: string): Promise<string> {
+  try {
+    return (await deps.data(path)).text ?? DATA_DOWN;
+  } catch {
+    return DATA_DOWN;
+  }
+}
+
+/** The text answer to a command. `log` has no text answer (it posts buttons) and returns null. */
+export async function runCommand(name: CommandName, deps: CommandDeps): Promise<string | null> {
   switch (name) {
     case 'stop': {
       // Pause first, so nothing can start between "kill" and "pause"
@@ -35,6 +62,19 @@ export function runCommand(name: CommandName, deps: CommandDeps): string {
       if (!deps.isPaused()) return '▶️ Already running.';
       deps.setPaused(false);
       return '▶️ Resumed. Queued messages and schedules will run now.';
+    case 'today':
+      return fromData(deps, '/host/today');
+    case 'budget':
+      return fromData(deps, '/host/budget');
+    case 'status': {
+      const host = [
+        `Host: ${deps.isPaused() ? '⏸ stopped (/resume to continue)' : '▶️ running'}, up ${duration(deps.uptimeSeconds())}`,
+        `Agents running now: ${deps.runningCount()}`,
+      ];
+      return `${host.join('\n')}\n${await fromData(deps, '/host/status')}`;
+    }
+    case 'log':
+      return null;
   }
 }
 
