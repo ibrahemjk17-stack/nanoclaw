@@ -20,6 +20,8 @@ export interface ApprovalDeps {
   ownerId: () => string | undefined;
   now: () => Date;
   warn: (msg: string, extra?: unknown) => void;
+  /** Leaves a visible line for every tap that reaches us, so a tap can never disappear without a trace. */
+  trace?: (msg: string, extra?: unknown) => void;
 }
 
 export const ACTION_ID = /^ncq:jv-appr-([0-9a-f]{12}):([01])$/;
@@ -71,7 +73,17 @@ export async function handleApprovalAction(event: ActionEvent, adapter: Adapter,
   const m = ACTION_ID.exec(event.actionId);
   if (!m) return false;
   const owner = deps.ownerId();
-  if (!owner || handleTail(event.user?.userId) !== owner) return true; // ours, but not the owner: nothing happens, no reply
+  deps.trace?.('Jarvis approval tap', {
+    decision: m[2] === '0' ? 'approve' : 'reject',
+    user: event.user?.userId ?? null,
+  });
+  if (!owner || handleTail(event.user?.userId) !== owner) {
+    deps.trace?.('Jarvis approval tap ignored: not the owner', {
+      user: event.user?.userId ?? null,
+      ownerConfigured: Boolean(owner),
+    });
+    return true; // ours, but not the owner: nothing happens, no reply
+  }
 
   let text: string;
   try {

@@ -364,6 +364,16 @@ export interface TelegramBridgeOptions {
  * claimed by another instance) so the registry surfaces its normal
  * "credentials missing, skipping" warning.
  */
+/** The update types the adapter handles: messages (and edits, channel posts), button taps, reactions. */
+export const TELEGRAM_ALLOWED_UPDATES = [
+  'message',
+  'edited_message',
+  'channel_post',
+  'edited_channel_post',
+  'callback_query',
+  'message_reaction',
+];
+
 export function createTelegramBridge(options: TelegramBridgeOptions = {}): ChannelAdapter | null {
   const tokenKey = `TELEGRAM_BOT_TOKEN${options.envKeySuffix ? `_${options.envKeySuffix}` : ''}`;
   const token = readEnvFile([tokenKey])[tokenKey];
@@ -379,6 +389,9 @@ export function createTelegramBridge(options: TelegramBridgeOptions = {}): Chann
   const telegramAdapter = createTelegramAdapter({
     botToken: token,
     mode: 'polling',
+    // Jarvis patch (docs/UPSTREAM_PATCHES.md #6): name the update types we need. When a poller does not, Telegram keeps whatever the
+    // LAST client asked for (even a one-off manual getUpdates), which can silently drop button taps (callback_query).
+    longPolling: { allowedUpdates: TELEGRAM_ALLOWED_UPDATES },
   });
   // Jarvis patch (docs/UPSTREAM_PATCHES.md): treat each forum topic as its own
   // chat, so a topic can be wired to its own agent group. The adapter already

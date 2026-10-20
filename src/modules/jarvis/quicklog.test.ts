@@ -45,6 +45,32 @@ describe('the card', () => {
   });
 });
 
+describe('a tap leaves a trace', () => {
+  it("logs every tap that reaches us, and says why a stranger's was ignored", async () => {
+    const trace = vi.fn();
+    const { deps } = make({ trace });
+    await handleQuickLogAction(event('ncq:jv-log-abc123:1'), adapter(), deps);
+    expect(trace).toHaveBeenCalledWith('Jarvis quick-log tap', { index: 1, user: '555' });
+    trace.mockClear();
+    await handleQuickLogAction(event('ncq:jv-log-abc123:1', '999'), adapter(), deps);
+    expect(trace.mock.calls.map((c) => c[0])).toEqual([
+      'Jarvis quick-log tap',
+      'Jarvis quick-log tap ignored: not the owner',
+    ]);
+  });
+  it('a tap with no user at all is ignored visibly, not silently', async () => {
+    const trace = vi.fn();
+    const { deps, calls } = make({ trace });
+    const e = { ...event('ncq:jv-log-abc123:1'), user: undefined };
+    expect(await handleQuickLogAction(e, adapter(), deps)).toBe(true);
+    expect(calls).toEqual([]);
+    expect(trace).toHaveBeenCalledWith('Jarvis quick-log tap ignored: not the owner', {
+      user: null,
+      ownerConfigured: true,
+    });
+  });
+});
+
 describe('a tap', () => {
   it("logs through the data server with the card's signature and index, then updates the card in place", async () => {
     const { deps, calls } = make();

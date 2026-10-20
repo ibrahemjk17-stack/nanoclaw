@@ -121,6 +121,21 @@ describe('the poll', () => {
   });
 });
 
+describe('a tap leaves a trace', () => {
+  it("logs every tap that reaches us, and says why a stranger's was ignored", async () => {
+    const trace = vi.fn();
+    const { deps } = make({ trace });
+    await handleApprovalAction(event('ncq:jv-appr-abcdef012345:1'), adapter(), deps);
+    expect(trace).toHaveBeenCalledWith('Jarvis approval tap', { decision: 'reject', user: '555' });
+    trace.mockClear();
+    await handleApprovalAction(event('ncq:jv-appr-abcdef012345:0', '999'), adapter(), deps);
+    expect(trace.mock.calls.map((c) => c[0])).toEqual([
+      'Jarvis approval tap',
+      'Jarvis approval tap ignored: not the owner',
+    ]);
+  });
+});
+
 describe('a tap', () => {
   it('Approve sends the decision for that request and replaces the card with the result', async () => {
     const { deps, calls } = make();

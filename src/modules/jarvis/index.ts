@@ -116,6 +116,7 @@ registerQuestionActionHandler((event, adapter) =>
     ownerId,
     now: () => new Date(),
     warn: (msg, extra) => log.warn(msg, { extra }),
+    trace: (msg, extra) => log.info(msg, { extra }),
   }),
 );
 
@@ -126,6 +127,7 @@ const approvalDeps: ApprovalDeps = {
   data,
   ownerId,
   now: () => new Date(),
+  trace: (msg, extra) => log.info(msg, { extra }),
   warn: (msg, extra) => {
     // quiet while the data service restarts: at most one line per 10 minutes
     if (Date.now() - lastApprovalWarn > 10 * 60_000) {
