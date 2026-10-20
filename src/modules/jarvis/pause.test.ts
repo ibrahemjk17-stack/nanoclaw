@@ -18,6 +18,7 @@ import { isHostPaused, setHostPaused } from './pause.js';
 const flag = path.join(dir, 'jarvis-paused');
 
 beforeEach(() => {
+  delete process.env.JARVIS_PAUSE_FILE; // these tests are about the default location (data dir); the global setup overrides it
   fs.rmSync(flag, { force: true });
 });
 

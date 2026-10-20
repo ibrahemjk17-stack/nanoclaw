@@ -8,6 +8,7 @@
  * ordering, exit bookkeeping.
  */
 import { isHostPaused } from './modules/jarvis/pause.js';
+import { runWakeGates } from './modules/jarvis/wake-gate.js';
 import { exec } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -212,6 +213,11 @@ export function getActiveContainerCount(): number {
   return activeContainers.size;
 }
 
+/** Ids of the sessions whose containers are running now (Jarvis budget sweep). */
+export function listActiveSessionIds(): string[] {
+  return [...activeContainers.keys()];
+}
+
 export function isContainerRunning(sessionId: string): boolean {
   return activeContainers.has(sessionId);
 }
@@ -342,8 +348,10 @@ export function wakeContainer(session: Session): Promise<boolean> {
     log.debug('Container wake already in-flight — joining existing promise', { sessionId: session.id });
     return existing;
   }
-  const promise = spawnContainer(session)
-    .then(() => true)
+  // Jarvis patch (docs/UPSTREAM_PATCHES.md #5): every registered gate (the budget check) must say yes before a container starts.
+  // A refusal leaves the inbound row pending, exactly like a failed spawn; a gate that cannot answer counts as a refusal.
+  const promise = runWakeGates(session)
+    .then((allowed) => (allowed ? spawnContainer(session).then(() => true) : false))
     .catch((err) => {
       log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
       return false;

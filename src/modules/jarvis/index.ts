@@ -9,7 +9,13 @@
  * Messages from anyone else are not touched here (normal routing and its access policy apply).
  */
 import { registerQuestionActionHandler } from '../../channels/question-render-registry.js';
-import { getActiveContainerCount, killAllContainers } from '../../container-runner.js';
+import {
+  getActiveContainerCount,
+  killAllContainers,
+  killContainer,
+  listActiveSessionIds,
+} from '../../container-runner.js';
+import { getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
@@ -17,6 +23,9 @@ import { registerMessageInterceptor } from '../../router.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 
 import { handleApprovalAction, syncApprovals, type ApprovalDeps } from './approvals.js';
+import { createBudgetGate, createBudgetSweep, SWEEP_MS, type BudgetGateDeps } from './budget.js';
+import { resolveSession } from './resolve.js';
+import { registerWakeGate } from './wake-gate.js';
 import { handleTail, PAUSED_NOTICE, parseCommand, runCommand, type CommandDeps } from './commands.js';
 import { isHostPaused, setHostPaused } from './pause.js';
 import { handleQuickLogAction, quickLogContent, type Habits } from './quicklog.js';
@@ -146,3 +155,25 @@ registerQuestionActionHandler((event, adapter) => handleApprovalAction(event, ad
 setInterval(() => {
   if (setting('JARVIS_APPROVALS_PLATFORM_ID') && ownerId()) void syncApprovals(approvalDeps);
 }, 5000).unref();
+
+// ── Budget gate ──
+// No agent container starts unless the data server says this group may run today (limits, allowed model); containers that are running
+// are checked again every SWEEP_MS and stopped when over. Owner notices go to General (JARVIS_NOTICES_PLATFORM_ID, set by telegram-wire.sh).
+const budgetDeps: BudgetGateDeps = {
+  data,
+  resolve: resolveSession,
+  now: () => Date.now(),
+  warn: (msg, extra) => log.warn(msg, { extra }),
+  notify: async (text) => {
+    const target = setting('JARVIS_NOTICES_PLATFORM_ID');
+    const adapter = getDeliveryAdapter();
+    if (!target || !adapter) throw new Error('notices chat or delivery adapter not available');
+    await adapter.deliver('telegram', target, null, 'chat-sdk', JSON.stringify({ text }));
+  },
+};
+registerWakeGate('budget', createBudgetGate(budgetDeps));
+
+const sweep = createBudgetSweep({ ...budgetDeps, listActive: listActiveSessionIds, getSession, kill: killContainer });
+setInterval(() => {
+  void sweep();
+}, SWEEP_MS).unref();

@@ -33,7 +33,11 @@ vi.mock('../../container-runner.js', () => ({
     return 3;
   },
   getActiveContainerCount: () => 2,
+  killContainer: () => undefined,
+  listActiveSessionIds: () => [],
 }));
+vi.mock('../../db/sessions.js', () => ({ getSession: async () => undefined }));
+vi.mock('./resolve.js', () => ({ resolveSession: async () => null }));
 vi.mock('../../delivery.js', () => ({
   getDeliveryAdapter: () => ({
     deliver: async (_c: string, platformId: string, _t: null, kind: string, content: string) => {

@@ -11,7 +11,8 @@ import path from 'path';
 
 import { DATA_DIR } from '../../config.js';
 
-const flagPath = (): string => path.join(DATA_DIR, 'jarvis-paused');
+/** `data/jarvis-paused`, unless JARVIS_PAUSE_FILE says otherwise (the test setup points it at a throwaway file). */
+const flagPath = (): string => process.env.JARVIS_PAUSE_FILE || path.join(DATA_DIR, 'jarvis-paused');
 
 export function isHostPaused(): boolean {
   return fs.existsSync(flagPath());
@@ -19,7 +20,7 @@ export function isHostPaused(): boolean {
 
 export function setHostPaused(value: boolean): void {
   if (value) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(path.dirname(flagPath()), { recursive: true });
     fs.writeFileSync(flagPath(), `${new Date().toISOString()}\n`);
   } else {
     fs.rmSync(flagPath(), { force: true });

@@ -1,4 +1,10 @@
+import os from 'os';
+import path from 'path';
+
 import { beforeEach } from 'vitest';
+
+// Jarvis: tests must never read the live pause file in data/ (a stopped host would make unrelated tests fail). Each test process gets its own.
+process.env.JARVIS_PAUSE_FILE ||= path.join(os.tmpdir(), `jarvis-paused-test-${process.pid}`);
 
 import type { GatewayProviderDefinition } from './gateway-providers/gateway-provider-registry.js';
 
