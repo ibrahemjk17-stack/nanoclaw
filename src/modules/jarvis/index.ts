@@ -6,6 +6,7 @@
  *   /resume  lift the pause
  *   /today /status /budget   answered from the data server
  *   /log     post the quick-log buttons; a tap logs a habit step (no model call)
+ * and the owner's Telegram voice notes, which are transcribed locally and routed as text (voice.ts, Phase 2e).
  * Messages from anyone else are not touched here (normal routing and its access policy apply).
  */
 import { registerQuestionActionHandler } from '../../channels/question-render-registry.js';
@@ -18,10 +19,11 @@ import {
 import { getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter, registerDeliveryAction } from '../../delivery.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
+import { getMessagingGroupAgents, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { unguarded } from '../../guard/index.js';
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
-import { registerMessageInterceptor } from '../../router.js';
+import { registerMessageInterceptor, routeInbound } from '../../router.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 
 import { handleApprovalAction, syncApprovals, type ApprovalDeps } from './approvals.js';
@@ -32,6 +34,7 @@ import { createUsageHandler, flushSpool, SPOOL_FLUSH_MS, spoolGate, type UsageDe
 import { handleTail, PAUSED_NOTICE, parseCommand, runCommand, type CommandDeps } from './commands.js';
 import { isHostPaused, setHostPaused } from './pause.js';
 import { handleQuickLogAction, quickLogContent, type Habits } from './quicklog.js';
+import { handleOwnerVoice, SttFailure, type SttAnswer, type VoiceDeps } from './voice.js';
 
 const NOTICE_EVERY_MS = 10 * 60_000;
 const lastNotice = new Map<string, number>();
@@ -78,6 +81,59 @@ async function send(event: InboundEvent, kind: string, content: string): Promise
 }
 const reply = (event: InboundEvent, text: string) => send(event, 'chat-sdk', JSON.stringify({ text }));
 
+/** POST a voice note's audio to the local STT service (jarvis-stt, Docker bridge). */
+async function transcribe(audio: Buffer): Promise<SttAnswer> {
+  const base = setting('JARVIS_STT_URL');
+  const token = setting('JARVIS_STT_TOKEN');
+  if (!base || !token) throw new SttFailure('unreachable', 'speech-to-text service not configured');
+  let res: Response;
+  try {
+    res = await fetch(`${base}/transcribe`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'audio/ogg' },
+      body: audio,
+      signal: AbortSignal.timeout(150_000), // the service's own limit is shorter; this only guards a hung connection
+    });
+  } catch (err) {
+    throw new SttFailure('unreachable', err instanceof Error ? err.message : 'fetch failed');
+  }
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok)
+    throw new SttFailure(
+      typeof body?.error === 'string' ? body.error : `http_${res.status}`,
+      typeof body?.message === 'string' ? body.message : '',
+    );
+  if (
+    !body ||
+    typeof body.text !== 'string' ||
+    typeof body.detected !== 'string' ||
+    typeof body.p !== 'number' ||
+    (body.language !== 'en' && body.language !== 'ar') ||
+    typeof body.audio_s !== 'number' ||
+    typeof body.ms !== 'number'
+  ) {
+    throw new SttFailure('engine', 'unexpected answer from the speech-to-text service');
+  }
+  return { ...(body as unknown as SttAnswer), echo: body.echo === true };
+}
+
+const voiceDeps: VoiceDeps<InboundEvent> = {
+  transcribe,
+  reroute: (event) => routeInbound(event),
+  reply,
+  logVoice: async (detail) => {
+    await data('/host/voice-log', detail);
+  },
+  groupOf: async (event) => {
+    const mg = await getMessagingGroupByPlatform(event.channelType, event.platformId, event.instance);
+    if (!mg) return null;
+    const [wiring] = await getMessagingGroupAgents(mg.id);
+    return wiring ? ((await getAgentGroup(wiring.agent_group_id))?.name ?? null) : null;
+  },
+  warn: (msg, extra) => log.warn(msg, { extra }),
+  trace: (msg, extra) => log.info(msg, { extra }),
+};
+
 const deps: CommandDeps = {
   isPaused: isHostPaused,
   setPaused: setHostPaused,
@@ -111,6 +167,9 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
     log.info('Jarvis command', { command, ms: Date.now() - started });
     return true;
   }
+
+  // The owner's voice note: transcribed in the background, then routed again as text (or the owner gets a notice).
+  if (handleOwnerVoice(event, voiceDeps)) return true;
 
   if (isHostPaused()) {
     const key = `${event.channelType}:${event.platformId}`;

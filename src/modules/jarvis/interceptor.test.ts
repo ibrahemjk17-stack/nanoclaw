@@ -14,12 +14,22 @@ const state = vi.hoisted(() => ({
   } as Record<string, string>,
   fetched: [] as { url: string; auth: string | null }[],
   dataDown: false,
+  rerouted: [] as unknown[],
+  sttBodies: [] as unknown[],
+  sttRelease: null as null | (() => void),
 }));
 
 vi.mock('../../router.js', () => ({
   registerMessageInterceptor: (fn: (e: unknown) => Promise<boolean>) => {
     state.interceptor = fn;
   },
+  routeInbound: async (e: unknown) => {
+    state.rerouted.push(e);
+  },
+}));
+vi.mock('../../db/messaging-groups.js', () => ({
+  getMessagingGroupByPlatform: async () => undefined,
+  getMessagingGroupAgents: async () => [],
 }));
 vi.mock('../../channels/question-render-registry.js', () => ({
   registerQuestionActionHandler: (fn: (e: unknown, a: unknown) => Promise<boolean>) => {
@@ -65,10 +75,17 @@ vi.mock('../../log.js', () => ({
 // the data server, as the host sees it
 vi.stubGlobal(
   'fetch',
-  vi.fn(async (url: string, init: { headers: Record<string, string> }) => {
+  vi.fn(async (url: string, init: { headers: Record<string, string>; body?: unknown }) => {
     state.fetched.push({ url, auth: init.headers.authorization ?? null });
     if (state.dataDown) throw new Error('ECONNREFUSED');
     const path = new URL(url).pathname;
+    if (path === '/transcribe') {
+      // the STT service: held until the test releases it, so the test can act while a transcription is pending
+      state.sttBodies.push(init.body);
+      await new Promise<void>((r) => (state.sttRelease = r));
+      const body = { text: 'Hey Jarvis', detected: 'ar', p: 0.52, language: 'en', audio_s: 3, ms: 9000, echo: true };
+      return { ok: true, status: 200, json: async () => body };
+    }
     const body =
       path === '/host/habits'
         ? { signature: 'abc123', labels: ['💧 Water +1', '🏃 Exercise'] }
@@ -99,8 +116,75 @@ beforeEach(() => {
   state.order = [];
   state.fetched = [];
   state.dataDown = false;
-  state.env = { TELEGRAM_OWNER_ID: '555', JARVIS_DATA_URL: 'http://data.test:3300', JARVIS_HOST_TOKEN: 'host-token' };
+  state.rerouted = [];
+  state.sttBodies = [];
+  state.sttRelease = null;
+  state.env = {
+    TELEGRAM_OWNER_ID: '555',
+    JARVIS_DATA_URL: 'http://data.test:3300',
+    JARVIS_HOST_TOKEN: 'host-token',
+    JARVIS_STT_URL: 'http://stt.test:3301',
+    JARVIS_STT_TOKEN: 'stt-token',
+  };
   delete process.env.TELEGRAM_OWNER_ID;
+});
+
+const voiceNote = (sender: string | undefined) => ({
+  ...event('', sender, 'telegram:-100:4'),
+  message: {
+    id: 'v',
+    kind: 'chat-sdk',
+    timestamp: 'now',
+    content: JSON.stringify({
+      text: '',
+      ...(sender ? { author: { userId: sender } } : {}),
+      attachments: [{ type: 'voice', data: Buffer.from('OggS').toString('base64') }],
+    }),
+  },
+});
+const until = async (cond: () => boolean) => {
+  for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
+};
+
+describe('voice notes (Phase 2e)', () => {
+  it("never sends anyone else's voice note to the speech service", async () => {
+    for (const sender of ['556', 'telegram:1', undefined])
+      expect(await state.interceptor!(voiceNote(sender))).toBe(false);
+    expect(state.fetched).toEqual([]);
+  });
+
+  it("takes the owner's note out of routing, sends the audio with the STT token, and re-routes it as text", async () => {
+    expect(await state.interceptor!(voiceNote('555'))).toBe(true);
+    await until(() => state.sttRelease !== null);
+    expect(state.fetched[0]).toEqual({ url: 'http://stt.test:3301/transcribe', auth: 'Bearer stt-token' });
+    expect(Buffer.from(state.sttBodies[0] as Buffer).toString()).toBe('OggS');
+    state.sttRelease!();
+    await until(() => state.rerouted.length === 1);
+    expect(state.sent.map(text)).toContain('🎤 heard: Hey Jarvis');
+    const c = JSON.parse((state.rerouted[0] as { message: { content: string } }).message.content);
+    expect(c.text).toContain('Hey Jarvis');
+    expect(c.attachments).toEqual([]);
+    expect(
+      state.fetched.some((f) => f.url === 'http://data.test:3300/host/voice-log' && f.auth === 'Bearer host-token'),
+    ).toBe(true);
+  });
+
+  it('/stop is handled at once while a transcription is still pending', async () => {
+    expect(await state.interceptor!(voiceNote('555'))).toBe(true);
+    await until(() => state.sttRelease !== null);
+    expect(await state.interceptor!(event('/stop', '555'))).toBe(true);
+    expect(state.order).toEqual(['pause=true', 'kill']);
+    state.sttRelease!();
+    await until(() => state.rerouted.length === 1);
+  });
+
+  it('tells the owner when the speech service is not configured, and routes nothing', async () => {
+    delete state.env.JARVIS_STT_URL;
+    expect(await state.interceptor!(voiceNote('555'))).toBe(true);
+    await until(() => state.sent.length === 1);
+    expect(text(state.sent[0]!)).toMatch(/not available/);
+    expect(state.rerouted).toEqual([]);
+  });
 });
 
 describe('the owner commands, intercepted before any agent', () => {
