@@ -195,6 +195,16 @@ describe('OneCLI gateway package', () => {
     }
   });
 
+  it('lets host.docker.internal bypass the gateway proxy, keeping any existing NO_PROXY entries once', () => {
+    const base = { caCertificate: 'CA', caCertificateContainerPath: '/tmp/ca.pem' };
+    expect(contributionFromConfig({ ...base, env: {} }, 'g1').env).toMatchObject({
+      NO_PROXY: 'host.docker.internal',
+      no_proxy: 'host.docker.internal',
+    });
+    const merged = contributionFromConfig({ ...base, env: { NO_PROXY: 'localhost,host.docker.internal' } }, 'g1').env;
+    expect(merged?.NO_PROXY).toBe('localhost,host.docker.internal');
+  });
+
   it('propagates approval startup failure so core can reconnect', async () => {
     sdk.startApproval.mockImplementationOnce(() => {
       throw new Error('gateway URL unavailable');

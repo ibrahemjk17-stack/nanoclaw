@@ -43,6 +43,11 @@ export function contributionFromConfig(
   dataDir = DATA_DIR,
 ): OneCLIContribution {
   const env = { ...config.env };
+  // Jarvis patch: host services (our data server, reached as host.docker.internal) must bypass the credential gateway proxy;
+  // sent through it, plain-HTTP requests to the host fail. See docs/UPSTREAM_PATCHES.md.
+  for (const key of ['NO_PROXY', 'no_proxy']) {
+    env[key] = [...new Set([...(env[key]?.split(',').filter(Boolean) ?? []), 'host.docker.internal'])].join(',');
+  }
   const mounts: GatewayMount[] = [];
   const mount = (kind: 'ca' | 'combined' | 'stub', content: string, containerPath: string) => {
     mounts.push({
