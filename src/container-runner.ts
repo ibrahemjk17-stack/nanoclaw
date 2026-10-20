@@ -7,6 +7,7 @@
  * here is composition and lifecycle policy: which mounts, which env, restart
  * ordering, exit bookkeeping.
  */
+import { isHostPaused } from './modules/jarvis/pause.js';
 import { exec } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -327,6 +328,11 @@ async function retryPendingAdoption(session: Session): Promise<boolean> {
  * next tick.
  */
 export function wakeContainer(session: Session): Promise<boolean> {
+  // Jarvis patch (docs/UPSTREAM_PATCHES.md #5): while the owner has sent /stop nothing starts. The inbound row stays pending.
+  if (isHostPaused()) {
+    log.debug('Host paused (/stop): not waking container', { sessionId: session.id });
+    return Promise.resolve(false);
+  }
   if (activeContainers.has(session.id)) {
     log.debug('Container already running', { sessionId: session.id });
     return Promise.resolve(true);
@@ -752,6 +758,13 @@ async function finish(sessionId: string, runtime: ActiveSessionRuntime, failure?
       log.error('Container exit callback failed', { sessionId, containerName, err });
     }
   }
+}
+
+/** Kill every running container (Jarvis /stop). Returns how many were running. */
+export function killAllContainers(reason: string): number {
+  const ids = [...activeContainers.keys()];
+  for (const id of ids) killContainer(id, reason);
+  return ids.length;
 }
 
 /** Kill a container for a session. */
