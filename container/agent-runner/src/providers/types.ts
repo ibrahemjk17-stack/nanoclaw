@@ -1,4 +1,5 @@
 import type { MemorySessionHookRegistration } from '../memory/session-hook.js';
+import type { ReportedUsage } from './usage.js';
 
 /**
  * A speed tier name. The vocabulary is provider-declared (the host validates
@@ -161,7 +162,7 @@ export type ProviderEvent =
    * (e.g. a billing/quota notice), kept separate from model scratchpad and
    * raw diagnostics. Failures without `error` receive a generic notice.
    */
-  | { type: 'result'; text: string | null; isError?: boolean; error?: string }
+  | { type: 'result'; text: string | null; isError?: boolean; error?: string; usage?: ReportedUsage }
   /**
    * An assistant text segment emitted mid-turn (e.g. between tool calls).
    * The SDK's final `result` carries only the LAST assistant text, so a

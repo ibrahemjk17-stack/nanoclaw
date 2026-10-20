@@ -74,7 +74,7 @@ it.each([false, true])('delivers the Claude SDK billing error once, with prior r
     claudeRuntimeContract.textDelivery === 'mid-turn-complete',
   );
 
-  expect(getUndeliveredMessages().map((row) => JSON.parse(row.content).text)).toEqual([
+  expect(getUndeliveredMessages().filter((row) => row.kind !== 'system').map((row) => JSON.parse(row.content).text)).toEqual([
     ...(partialReply ? ['Finished the first step.'] : []),
     BILLING_ERROR,
   ]);
@@ -119,9 +119,10 @@ const AUTH_NOTICE = `${AUTH_ERROR}\n${OWNER_HINT}`;
 async function resultEvents(): Promise<Array<{ text: string | null; isError?: boolean; error?: string }>> {
   const provider = createProvider('claude');
   provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
-  const events: Array<{ type: string; text: string | null; isError?: boolean; error?: string }> = [];
+  const events: Array<{ type: string; text: string | null; isError?: boolean; error?: string; usage?: unknown }> = [];
   for await (const e of provider.query({ prompt: 'ping', cwd: tmp }).events) events.push(e as (typeof events)[0]);
-  return events.filter((e) => e.type === 'result');
+  // these tests are about the error notices; the usage report on each result is covered by claude.usage.test.ts
+  return events.filter((e) => e.type === 'result').map(({ usage: _usage, ...rest }: Record<string, unknown>) => rest) as never;
 }
 
 it.each([
@@ -182,6 +183,6 @@ it('delivers the SDK auth error to the channel instead of the generic notice', a
     claudeRuntimeContract.textDelivery === 'mid-turn-complete',
   );
 
-  expect(getUndeliveredMessages().map((row) => JSON.parse(row.content).text)).toEqual([AUTH_NOTICE]);
+  expect(getUndeliveredMessages().filter((row) => row.kind !== 'system').map((row) => JSON.parse(row.content).text)).toEqual([AUTH_NOTICE]);
   expect(exchanges.map((e) => [e.result, e.status])).toEqual([[AUTH_NOTICE, 'error']]);
 });

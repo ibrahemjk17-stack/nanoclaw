@@ -19,6 +19,7 @@ import {
 // read the SDK's on-disk .jsonl, which no other provider has.
 import { archiveClaudeTranscript, rotateClaudeContinuation } from './claude-history.js';
 import { registerProvider } from './provider-registry.js';
+import { extractUsage } from './usage.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
@@ -379,6 +380,8 @@ export class ClaudeProvider implements AgentProvider {
             text: resultAsError ? null : (m.result ?? null),
             isError,
             error: m.errors?.length ? m.errors.join('\n') : resultAsError || undefined,
+            // Jarvis patch (docs/UPSTREAM_PATCHES.md #7): the SDK's usage for this result, reported to the host for the budget.
+            usage: extractUsage(message as unknown as Parameters<typeof extractUsage>[0]),
           };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };

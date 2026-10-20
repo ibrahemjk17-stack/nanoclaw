@@ -30,6 +30,7 @@ import {
   type RoutingContext,
 } from './formatter.js';
 import { stripHarnessTagArtifacts } from './harness-tag-strip.js';
+import { reportUsage } from './usage-report.js';
 import { isUploadTraceCommand, uploadTrace } from './upload-trace.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from './providers/types.js';
 import type { ProviderRuntimeContract } from './provider-contracts/registry.js';
@@ -616,6 +617,8 @@ export async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
+        // Jarvis patch (docs/UPSTREAM_PATCHES.md #7): tell the host what this turn cost, before anything else can go wrong.
+        if (event.usage) await reportUsage(event.usage, writeMessageOut, log);
         const resultText = event.text ?? '';
         const failed = event.isError === true;
         if (resultText || failed) {

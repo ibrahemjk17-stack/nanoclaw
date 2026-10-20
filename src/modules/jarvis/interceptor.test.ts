@@ -37,8 +37,11 @@ vi.mock('../../container-runner.js', () => ({
   listActiveSessionIds: () => [],
 }));
 vi.mock('../../db/sessions.js', () => ({ getSession: async () => undefined }));
+vi.mock('../../db/agent-groups.js', () => ({ getAgentGroup: async () => undefined }));
+vi.mock('../../guard/index.js', () => ({ unguarded: (reason: string) => ({ reason }) }));
 vi.mock('./resolve.js', () => ({ resolveSession: async () => null }));
 vi.mock('../../delivery.js', () => ({
+  registerDeliveryAction: () => undefined,
   getDeliveryAdapter: () => ({
     deliver: async (_c: string, platformId: string, _t: null, kind: string, content: string) => {
       state.sent.push({ platformId, kind, content });

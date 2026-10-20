@@ -16,7 +16,9 @@ import {
   listActiveSessionIds,
 } from '../../container-runner.js';
 import { getSession } from '../../db/sessions.js';
-import { getDeliveryAdapter } from '../../delivery.js';
+import { getDeliveryAdapter, registerDeliveryAction } from '../../delivery.js';
+import { getAgentGroup } from '../../db/agent-groups.js';
+import { unguarded } from '../../guard/index.js';
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
 import { registerMessageInterceptor } from '../../router.js';
@@ -26,6 +28,7 @@ import { handleApprovalAction, syncApprovals, type ApprovalDeps } from './approv
 import { createBudgetGate, createBudgetSweep, SWEEP_MS, type BudgetGateDeps } from './budget.js';
 import { resolveSession } from './resolve.js';
 import { registerWakeGate } from './wake-gate.js';
+import { createUsageHandler, flushSpool, SPOOL_FLUSH_MS, spoolGate, type UsageDeps } from './usage.js';
 import { handleTail, PAUSED_NOTICE, parseCommand, runCommand, type CommandDeps } from './commands.js';
 import { isHostPaused, setHostPaused } from './pause.js';
 import { handleQuickLogAction, quickLogContent, type Habits } from './quicklog.js';
@@ -177,3 +180,25 @@ const sweep = createBudgetSweep({ ...budgetDeps, listActive: listActiveSessionId
 setInterval(() => {
   void sweep();
 }, SWEEP_MS).unref();
+
+// ── Usage reports from agent containers (core patch #7) ──
+// Each turn's usage goes to the data server, which records it against the budget and says whether the group may keep running; a container
+// that has just gone over is stopped at once. Reports that cannot be delivered are spooled, and while any are waiting no agent starts.
+const usageDeps: UsageDeps = {
+  data,
+  groupName: async (id) => (await getAgentGroup(id))?.name ?? null,
+  notify: budgetDeps.notify,
+  kill: killContainer,
+  warn: (msg, extra) => log.warn(msg, { extra }),
+};
+registerDeliveryAction(
+  'usage',
+  createUsageHandler(usageDeps),
+  unguarded(
+    'records the agent group own usage against its budget; the only effect is a write to the data server and, when over the limit, stopping that same container',
+  ),
+);
+registerWakeGate('usage-spool', spoolGate);
+setInterval(() => {
+  void flushSpool(usageDeps).catch((err) => log.warn('Usage spool flush failed', { err }));
+}, SPOOL_FLUSH_MS).unref();
