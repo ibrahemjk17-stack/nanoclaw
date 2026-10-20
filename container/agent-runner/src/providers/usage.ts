@@ -17,6 +17,8 @@ export interface ReportedModelTotals {
 }
 
 export interface ReportedUsage {
+  /** Identifies the SDK query() call these running totals belong to. A new id means the totals started over, whatever their values. */
+  queryId: string;
   /** Running totals per model for this session, as the SDK reports them. */
   models: Record<string, ReportedModelTotals>;
   totalCostUsd: number | null;
@@ -35,7 +37,7 @@ interface SdkResultLike {
   total_cost_usd?: unknown;
 }
 
-export function extractUsage(message: SdkResultLike): ReportedUsage {
+export function extractUsage(message: SdkResultLike, queryId: string): ReportedUsage {
   const models: Record<string, ReportedModelTotals> = {};
   const raw = message.modelUsage;
   if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
@@ -75,5 +77,5 @@ export function extractUsage(message: SdkResultLike): ReportedUsage {
       : null;
 
   const total = message.total_cost_usd;
-  return { models, totalCostUsd: typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : null, turn };
+  return { queryId, models, totalCostUsd: typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : null, turn };
 }

@@ -20,6 +20,7 @@ import {
 import { archiveClaudeTranscript, rotateClaudeContinuation } from './claude-history.js';
 import { registerProvider } from './provider-registry.js';
 import { extractUsage } from './usage.js';
+import { randomUUID } from 'node:crypto';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
@@ -314,6 +315,8 @@ export class ClaudeProvider implements AgentProvider {
 
     let aborted = false;
 
+    // One id per SDK query() call: the SDK's running totals belong to that call, and a new container (a new call) starts them over.
+    const queryId = randomUUID();
     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
       let messageCount = 0;
       let lastStreamActivityAt = 0;
@@ -381,7 +384,7 @@ export class ClaudeProvider implements AgentProvider {
             isError,
             error: m.errors?.length ? m.errors.join('\n') : resultAsError || undefined,
             // Jarvis patch (docs/UPSTREAM_PATCHES.md #7): the SDK's usage for this result, reported to the host for the budget.
-            usage: extractUsage(message as unknown as Parameters<typeof extractUsage>[0]),
+            usage: extractUsage(message as unknown as Parameters<typeof extractUsage>[0], queryId),
           };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };

@@ -11,7 +11,9 @@ import { getUndeliveredMessages } from '../db/messages-out.js';
 import { closeSessionDb, getInboundDb, initTestSessionDb } from '../mailbox/sqlite/connection.js';
 import { processQuery } from '../poll-loop.js';
 import { reportUsage } from '../usage-report.js';
-import { extractUsage } from './usage.js';
+import { extractUsage as extractUsageFor } from './usage.js';
+
+const extractUsage = (m: Parameters<typeof extractUsageFor>[0]) => extractUsageFor(m, 'q-test');
 
 const sdkMessages: unknown[] = [];
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
@@ -97,9 +99,9 @@ it('extractUsage reports per-model running totals, the total cost and the turn\'
 });
 
 it('extractUsage never throws and never invents: missing, malformed or hostile fields become 0 or null', () => {
-  expect(extractUsage({})).toEqual({ models: {}, totalCostUsd: null, turn: null });
-  expect(extractUsage({ modelUsage: 'nope', usage: 7, total_cost_usd: 'x' })).toEqual({ models: {}, totalCostUsd: null, turn: null });
-  expect(extractUsage({ modelUsage: [1, 2], usage: null })).toEqual({ models: {}, totalCostUsd: null, turn: null });
+  expect(extractUsage({})).toEqual({ queryId: 'q-test', models: {}, totalCostUsd: null, turn: null });
+  expect(extractUsage({ modelUsage: 'nope', usage: 7, total_cost_usd: 'x' })).toEqual({ queryId: 'q-test', models: {}, totalCostUsd: null, turn: null });
+  expect(extractUsage({ modelUsage: [1, 2], usage: null })).toEqual({ queryId: 'q-test', models: {}, totalCostUsd: null, turn: null });
   const bad = extractUsage({
     modelUsage: { m: { inputTokens: -5, outputTokens: Number.NaN, cacheReadInputTokens: '9', costUSD: Number.POSITIVE_INFINITY }, '': modelUsage(1, 1, 1), n: null },
     total_cost_usd: -1,
@@ -144,6 +146,22 @@ it('two results in one query give two reports, each carrying its own running tot
   expect(usage.map((u) => u.totalCostUsd)).toEqual([0.01, 0.025]);
 });
 
+it('every result of ONE query carries the same query id, and a different query gets a different one (a new container starts its totals over)', async () => {
+  sdkMessages.push({ type: 'system', subtype: 'init', session_id: 's-q1' });
+  sdkMessages.push({ type: 'result', subtype: 'success', is_error: false, result: 'a', modelUsage: { m: modelUsage(100, 10, 0.01) } });
+  sdkMessages.push({ type: 'result', subtype: 'success', is_error: false, result: 'b', modelUsage: { m: modelUsage(250, 30, 0.025) } });
+  const first = (await runTurn()).usage;
+  expect(first[0].queryId).toBe(first[1].queryId);
+  expect(first[0].queryId.length).toBeGreaterThan(8);
+  closeSessionDb();
+  initTestSessionDb();
+  getInboundDb().prepare(`INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id) VALUES ('main', 'main', 'channel', 'discord', 'chan-1', NULL)`).run();
+  sdkMessages.length = 0;
+  sdkMessages.push({ type: 'result', subtype: 'success', is_error: false, result: 'c', modelUsage: { m: modelUsage(500, 50, 0.05) } });
+  const second = (await runTurn()).usage;
+  expect(second[0].queryId).not.toBe(first[0].queryId);
+});
+
 it('a failed turn still reports what it used', async () => {
   sdkMessages.push({
     type: 'result',
@@ -160,7 +178,7 @@ it('a failed turn still reports what it used', async () => {
 it('a result with no usage fields at all still produces a (empty) report, so the host sees that a turn happened', async () => {
   sdkMessages.push({ type: 'result', subtype: 'success', is_error: false, result: 'x' });
   const { usage } = await runTurn();
-  expect(usage).toEqual([{ models: {}, totalCostUsd: null, turn: null }]);
+  expect(usage).toEqual([{ queryId: expect.any(String), models: {}, totalCostUsd: null, turn: null }]);
 });
 
 it('reportUsage writes a system message with the action, and never throws when writing fails', async () => {
