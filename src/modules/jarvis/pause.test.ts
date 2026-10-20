@@ -1,8 +1,7 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dir = vi.hoisted(() => {
   // hoisted so the mock factory can see it
@@ -14,33 +13,34 @@ const dir = vi.hoisted(() => {
 });
 vi.mock('../../config.js', () => ({ DATA_DIR: dir }));
 
-import { _resetPauseCacheForTesting, isHostPaused, setHostPaused } from './pause.js';
+import { isHostPaused, setHostPaused } from './pause.js';
 
 const flag = path.join(dir, 'jarvis-paused');
 
 beforeEach(() => {
   fs.rmSync(flag, { force: true });
-  _resetPauseCacheForTesting();
 });
-afterEach(() => _resetPauseCacheForTesting());
 
 describe('pause flag', () => {
   it('starts not paused', () => {
     expect(isHostPaused()).toBe(false);
   });
-  it('survives a restart: a stop is read back from the file', () => {
+  it('is the file: a stop survives a restart, because there is no other state', () => {
     setHostPaused(true);
-    expect(isHostPaused()).toBe(true);
-    _resetPauseCacheForTesting(); // a new process starts with an empty cache
     expect(isHostPaused()).toBe(true);
     expect(fs.existsSync(flag)).toBe(true);
   });
-  it('resume removes the file and stays resumed after a restart', () => {
+  it('resume removes the file', () => {
     setHostPaused(true);
     setHostPaused(false);
-    _resetPauseCacheForTesting();
     expect(isHostPaused()).toBe(false);
-    expect(os.tmpdir()).toBeTruthy();
+    expect(fs.existsSync(flag)).toBe(false);
+  });
+  it('an emergency stop from a shell (creating the file) is seen at once, and removing it resumes', () => {
+    fs.writeFileSync(flag, '');
+    expect(isHostPaused()).toBe(true);
+    fs.rmSync(flag);
+    expect(isHostPaused()).toBe(false);
   });
   it('is safe to set twice, and to resume when not paused', () => {
     setHostPaused(true);
