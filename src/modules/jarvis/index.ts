@@ -16,6 +16,7 @@ import { log } from '../../log.js';
 import { registerMessageInterceptor } from '../../router.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 
+import { handleApprovalAction, syncApprovals, type ApprovalDeps } from './approvals.js';
 import { handleTail, PAUSED_NOTICE, parseCommand, runCommand, type CommandDeps } from './commands.js';
 import { isHostPaused, setHostPaused } from './pause.js';
 import { handleQuickLogAction, quickLogContent, type Habits } from './quicklog.js';
@@ -117,3 +118,29 @@ registerQuestionActionHandler((event, adapter) =>
     warn: (msg, extra) => log.warn(msg, { extra }),
   }),
 );
+
+// ── Approvals topic ──
+// Cards are posted into the Approvals topic (JARVIS_APPROVALS_PLATFORM_ID, set by scripts/telegram-wire.sh) and the owner's taps are handled here.
+let lastApprovalWarn = 0;
+const approvalDeps: ApprovalDeps = {
+  data,
+  ownerId,
+  now: () => new Date(),
+  warn: (msg, extra) => {
+    // quiet while the data service restarts: at most one line per 10 minutes
+    if (Date.now() - lastApprovalWarn > 10 * 60_000) {
+      lastApprovalWarn = Date.now();
+      log.warn(msg, { extra });
+    }
+  },
+  post: async (kind, content) => {
+    const target = setting('JARVIS_APPROVALS_PLATFORM_ID');
+    const adapter = getDeliveryAdapter();
+    if (!target || !adapter) throw new Error('approvals topic or delivery adapter not available');
+    return adapter.deliver('telegram', target, null, kind, content);
+  },
+};
+registerQuestionActionHandler((event, adapter) => handleApprovalAction(event, adapter, approvalDeps));
+setInterval(() => {
+  if (setting('JARVIS_APPROVALS_PLATFORM_ID') && ownerId()) void syncApprovals(approvalDeps);
+}, 5000).unref();
