@@ -138,7 +138,7 @@ const voiceNote = (sender: string | undefined) => ({
     content: JSON.stringify({
       text: '',
       ...(sender ? { author: { userId: sender } } : {}),
-      attachments: [{ type: 'voice', data: Buffer.from('OggS').toString('base64') }],
+      attachments: [{ type: 'audio', mimeType: 'audio/ogg', data: Buffer.from('OggS').toString('base64') }],
     }),
   },
 });

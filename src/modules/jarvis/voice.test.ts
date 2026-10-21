@@ -5,6 +5,7 @@ import {
   failureText,
   findVoice,
   handleOwnerVoice,
+  isVoiceNote,
   SttFailure,
   VOICE_MARKER,
   voiceText,
@@ -22,7 +23,8 @@ const voiceEvent = (extra: Record<string, unknown> = {}) => ({
       text: '',
       author: { userId: 'telegram:555' },
       attachments: [
-        { type: 'voice', mimeType: 'audio/ogg', size: AUDIO.length, data: AUDIO.toString('base64') },
+        // the shape @chat-adapter/telegram + the bridge really produce for a voice note (seen live 2026-10-21): type "audio", no name
+        { type: 'audio', mimeType: 'audio/ogg', size: AUDIO.length, data: AUDIO.toString('base64') },
         { type: 'image', name: 'x.png', data: 'aW1n' },
       ],
       ...extra,
@@ -84,6 +86,23 @@ describe('findVoice', () => {
     expect(findVoice(JSON.stringify({ attachments: [{ type: 'voice' }] }))).toBeNull();
     expect(findVoice('{nope')).toBeNull();
     expect(findVoice(voiceEvent({ [VOICE_MARKER]: { language: 'en' } }).message.content)).toBeNull();
+  });
+  it('does not take a music/audio FILE (it has a file name) or a non-OGG audio for a voice note', () => {
+    const file = { type: 'audio', mimeType: 'audio/ogg', name: 'song.ogg', data: 'eA==' };
+    const mp3 = { type: 'audio', mimeType: 'audio/mpeg', data: 'eA==' };
+    expect(findVoice(JSON.stringify({ attachments: [file] }))).toBeNull();
+    expect(findVoice(JSON.stringify({ attachments: [mp3] }))).toBeNull();
+  });
+});
+
+describe('isVoiceNote', () => {
+  it('matches how @chat-adapter/telegram labels a voice note (audio, audio/ogg, no name), and "voice"', () => {
+    expect(isVoiceNote({ type: 'audio', mimeType: 'audio/ogg', size: 8740 })).toBe(true);
+    expect(isVoiceNote({ type: 'voice', mimeType: 'audio/ogg' })).toBe(true);
+    expect(isVoiceNote({ type: 'audio', mimeType: 'audio/ogg', name: 'track.ogg' })).toBe(false);
+    expect(isVoiceNote({ type: 'audio', mimeType: 'audio/mpeg' })).toBe(false);
+    expect(isVoiceNote({ type: 'image', mimeType: 'image/png' })).toBe(false);
+    expect(isVoiceNote(null)).toBe(false);
   });
 });
 

@@ -66,7 +66,18 @@ interface Found {
   audio: Buffer;
 }
 
-/** The voice attachment of a message (with its bytes), or null. Only Telegram voice notes; audio files and video notes are not handled. */
+/**
+ * Is this attachment a Telegram voice note? @chat-adapter/telegram (4.29.0, createAttachment in dist/index.js) maps BOTH `message.voice`
+ * and `message.audio` to type "audio"; only `audio` (a music/audio file) carries a file name. So a voice note is an "audio" attachment,
+ * audio/ogg, with no name. "voice" is accepted too in case an adapter labels it so. Audio files and video notes are not handled.
+ */
+export function isVoiceNote(a: Record<string, unknown> | null | undefined): boolean {
+  if (!a) return false;
+  if (a.type === 'voice') return true;
+  return a.type === 'audio' && a.mimeType === 'audio/ogg' && (a.name === undefined || a.name === null || a.name === '');
+}
+
+/** The voice attachment of a message (with its bytes), or null. */
 export function findVoice(contentJson: string): Found | null {
   let content: Record<string, unknown>;
   try {
@@ -76,7 +87,7 @@ export function findVoice(contentJson: string): Found | null {
   }
   if (!content || typeof content !== 'object' || content[VOICE_MARKER]) return null;
   const atts = Array.isArray(content.attachments) ? (content.attachments as Record<string, unknown>[]) : [];
-  const voice = atts.find((a) => a && a.type === 'voice' && typeof a.data === 'string' && a.data.length > 0);
+  const voice = atts.find((a) => isVoiceNote(a) && typeof a.data === 'string' && a.data.length > 0);
   if (!voice) return null;
   const audio = Buffer.from(voice.data as string, 'base64');
   return audio.length > 0 ? { content, audio } : null;
@@ -161,7 +172,7 @@ async function processVoice<E extends VoiceEvent>(event: E, found: Found, deps: 
 
   // The audio is dropped here: the re-routed message carries only the text (no attachment bytes reach the agent's inbox).
   const attachments = Array.isArray(found.content.attachments)
-    ? (found.content.attachments as Record<string, unknown>[]).filter((a) => a?.type !== 'voice')
+    ? (found.content.attachments as Record<string, unknown>[]).filter((a) => !isVoiceNote(a))
     : [];
   const content = {
     ...found.content,
